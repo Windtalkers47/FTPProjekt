@@ -42,11 +42,15 @@ namespace FTPProjekt.Controllers
                 file.CopyTo(stream);
             }
 
-            _fileUploadService.UploadFileToFtp(filePath, file.FileName);
+            _fileUploadService.UploadFileToLocal(filePath, file.FileName);
+            //_fileUploadService.UploadFileToFtp(filePath, file.FileName);
+
+
+            // ลบไฟล์ Temp ออกจะได้ไม่รก
             System.IO.File.Delete(filePath);
 
-            _logger.LogInformation("File uploaded successfully.");
-            return Ok("File uploaded successfully.");
+            _logger.LogInformation("อัปโหลดไฟล์ได้สำเร็จ");
+            return Ok("อัปโหลดไฟล์ได้สำเร็จ");
         }
 
         [HttpGet("download/{fileName}")]

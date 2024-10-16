@@ -3,7 +3,10 @@ using System.IO;
 using System.Text.Json;
 using System.Collections.Generic;
 using System.Net;
+using FluentFTP;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using System.Threading.Tasks;
 
 namespace FTPProjekt
 {
@@ -33,32 +36,57 @@ namespace FTPProjekt
             _logger = logger;
         }
 
-        // อัปโหลดไฟล์
-        public void UploadFileToFtp(string filePath, string fileName)
+        // อัปโหลดไฟล์ แบบต่อเซิฟ
+        //public void UploadFileToFtp(string filePath, string fileName)
+        //{
+        //    using (var client = new FtpClient(_ftpServerUrl))
+        //    {
+        //        client.Credentials = new NetworkCredential(_ftpUsername, _ftpPassword);
+        //        try
+        //        {
+        //            client.Connect();
+
+        //            var destinationPath = $"/{fileName}";
+        //            if (client.FileExists(destinationPath))
+        //            {
+        //                var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(fileName);
+        //                var extension = Path.GetExtension(fileName);
+        //                var timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
+        //                destinationPath = $"/{fileNameWithoutExtension}_{timestamp}{extension}";
+        //            }
+
+        //            client.UploadFile(filePath, destinationPath);
+        //            _logger.LogInformation($"อัปโหลดไฟล์ได้สำเร็จ: {_ftpServerUrl}{destinationPath}");
+        //        }
+        //        catch (Exception ex)
+        //        {
+        //            _logger.LogError(ex, "เกิดข้อผิดพลาดไม่สามารถอัปโหลดได้");
+        //            throw;
+        //        }
+        //    }
+        //}
+
+        // เทสบน Local
+        public void UploadFileToLocal(string filePath, string fileName)
         {
-            try
+            // ฟิค Path
+            var localDirectory = "D:/INET/Project/FTPProjekt/FTPProjekt/FTP_Destination";
+
+            // รวม Path
+            var destinationPath = Path.Combine(localDirectory, fileName);
+
+            // ถ้ามีไฟล์อยู่แล้วให้สร้างใหม่โดยเพิ่มเวลาให้ไม่ซ้ำ
+            if (System.IO.File.Exists(destinationPath))
             {
-                var request = (FtpWebRequest)WebRequest.Create(new Uri($"{_ftpServerUrl}/{fileName}"));
-                request.Method = WebRequestMethods.Ftp.UploadFile;
-                request.Credentials = new NetworkCredential(_ftpUsername, _ftpPassword);
-
-                byte[] fileContents = File.ReadAllBytes(filePath);
-
-                using (var requestStream = request.GetRequestStream())
-                {
-                    requestStream.Write(fileContents, 0, fileContents.Length);
-                }
-
-                using (var response = (FtpWebResponse)request.GetResponse())
-                {
-                    _logger.LogInformation($"อัปโหลดสำเร็จ, สำเร็จ: {response.StatusDescription}");
-                }
+                var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(fileName);
+                var extension = Path.GetExtension(fileName);
+                var timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
+                destinationPath = Path.Combine(localDirectory, $"{fileNameWithoutExtension}_{timestamp}{extension}");
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "เกิดข้อผิดพลาดในการอัปโหลดแบบ FTP");
-                throw;
-            }
+
+            // ใส่ไปที่ปลายทาง
+            System.IO.File.Copy(filePath, destinationPath);
+            _logger.LogInformation($"ไฟล์อัปโหลดได้สำเร็จที่: {destinationPath}");
         }
 
     }
@@ -81,25 +109,34 @@ namespace FTPProjekt
         // โหลดไฟล์
         public byte[]? DownloadFileFromFtp(string fileName)
         {
-            try
+            using (var client = new FtpClient(_ftpServerUrl))
             {
-                var request = (FtpWebRequest)WebRequest.Create(new Uri($"{_ftpServerUrl}/{fileName}"));
-                request.Method = WebRequestMethods.Ftp.DownloadFile;
-                request.Credentials = new NetworkCredential(_ftpUsername, _ftpPassword);
+                client.Credentials = new NetworkCredential(_ftpUsername, _ftpPassword);
 
-                using (var response = (FtpWebResponse)request.GetResponse())
-                using (var responseStream = response.GetResponseStream())
-                using (var memoryStream = new MemoryStream())
+                try
                 {
-                    responseStream.CopyTo(memoryStream);
-                    _logger.LogInformation($"ดาวน์โหลดสำเร็จ, สถานะ: {response.StatusDescription}");
-                    return memoryStream.ToArray();
+                    client.Connect();
+
+                    using (var memoryStream = new MemoryStream())
+                    {
+                        // เช็คถ้า DownloadStream ส่งค่ากลับมาเป็น True ก็คือดาวน์โหลดได้
+                        if (client.DownloadStream(memoryStream, $"/{fileName}"))
+                        {
+                            _logger.LogInformation($"ดาวน์โหลดไฟล์บนเซิฟเวอร์สำเร็จ {_ftpServerUrl}/{fileName}");
+                            return memoryStream.ToArray();
+                        }
+                        else
+                        {
+                            _logger.LogError("ไม่สามารถดาวน์โหลดไฟล์ได้");
+                            return null;
+                        }
+                    }
                 }
-            }
-            catch (WebException ex)
-            {
-                _logger.LogError(ex, "เกิดข้อผิดพลาดในการดาวน์โหลดแบบ FTP");
-                return null;
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "เกิดข้อผิดพลาดในการดาวน์โหลดแบบ FTP");
+                    return null;
+                }
             }
         }
     }
@@ -163,39 +200,98 @@ namespace FTPProjekt
     {
         // รับ Logger เอาไว้ดู Output ตอนรันเสยๆ
         private readonly ILogger<FileMoveService> _logger;
+        private readonly string _ftpServerUrl;
+        private readonly string _ftpUsername;
+        private readonly string _ftpPassword;
 
-        public FileMoveService(ILogger<FileMoveService> logger)
+        public FileMoveService(IConfiguration configuration, ILogger<FileMoveService> logger)
         {
+            _ftpServerUrl = configuration["FtpSettings:ServerUrl"];
+            _ftpUsername = configuration["FtpSettings:Username"];
+            _ftpPassword = configuration["FtpSettings:Password"];
             _logger = logger;
         }
 
+        //public string MoveFile(string sourcePath, string destinationFolder, string fileName)
+        //{
+        //    using (var client = new FtpClient(_ftpServerUrl))
+        //    {
+        //        client.Credentials = new NetworkCredential(_ftpUsername, _ftpPassword);
+        //        try
+        //        {
+        //            client.Connect();
+
+        //            // รวม Path ต้นทาง
+        //            var sourceFilePath = $"{sourcePath}/{fileName}";
+
+        //            // เช็คว่าเจอไฟล์ที่ต้องการจะย้ายหรือไม่
+        //            if (client.FileExists(sourceFilePath))
+        //            {
+        //                _logger.LogError($"ไม่พบไฟล์ที่ต้นทาง: {sourceFilePath}");
+        //                throw new FileNotFoundException($"ไม่พบไฟล์: {sourceFilePath}");
+        //            }
+
+        //            // เก็บ Path ปลายทางโดยการรวมเอาชื่อไฟล์ไปต่อท้าย Root Folder
+        //            var destinationPath = $"/{destinationFolder}/{fileName}";
+
+        //            // ถ้ามีไฟล์ชื่อเดียวกันให้เพิ่มเวลาเข้าไป ป้องกันการซ้ำ
+        //            if (!client.FileExists(destinationPath))
+        //            {
+        //                destinationPath = $"/{destinationFolder}/{Path.GetFileNameWithoutExtension(fileName)}_{DateTime.Now:yyyyMMddHHmmss}{Path.GetExtension(fileName)}";
+        //            }
+
+        //            // Check if the destination folder exists
+        //            if (client.DirectoryExists($"/{destinationFolder}"))
+        //            {
+        //                _logger.LogError($"Destination folder does not exist: /{destinationFolder}");
+        //                throw new DirectoryNotFoundException($"Destination folder does not exist: /{destinationFolder}");
+        //            }
+
+        //            // ย้ายไฟล์จากต้นทาง ไป ปลายทาง
+        //            client.Rename(sourceFilePath, destinationPath);
+
+
+        //            // เอาไว้ดูตอนมันออกมา
+        //            _logger.LogInformation($"โอนย้ายไฟล์ไปปลายทางได้สำเร็จ {destinationPath}");
+
+        //            return destinationPath;
+        //        }
+        //        catch (Exception ex)
+        //        {
+        //            _logger.LogError(ex, "เกิดข้อผิดพลาดในการย้ายไฟล์");
+        //            throw;
+        //        }
+        //        finally
+        //        {
+        //            if (client.IsConnected)
+        //            {
+        //                client.Disconnect();
+        //            }
+        //        }
+        //    }
+        //}
+
         public string MoveFile(string sourcePath, string destinationFolder, string fileName)
         {
-            try
+            // เทสบน Local
+            var fullSourcePath = Path.Combine(sourcePath, fileName);
+            var fullDestinationPath = Path.Combine(destinationFolder, fileName);
+
+
+            if (!File.Exists(fullSourcePath))
             {
-                // เก็บ Path โดยการรวมเอาชื่อไฟล์ไปต่อท้าย Root Folder
-                var destinationPath = Path.Combine(destinationFolder, fileName);
-
-                if (File.Exists(destinationPath))
-                {
-                    // ถ้ามีไฟล์ชื่อเดียวกันให้เพิ่มเวลาเข้าไป ป้องกันการซ้ำ
-                    destinationPath = Path.Combine(destinationFolder, $"{Path.GetFileNameWithoutExtension(fileName)}_{DateTime.Now:yyyyMMddHHmmss}{Path.GetExtension(fileName)}");
-                }
-
-                // ย้ายไฟล์ไปยัง Folder ที่ต้องการตาม Path ปลายทาง
-                File.Move(sourcePath, destinationPath);
-
-                // เอาไว้ดูตอนมันออกมา
-                _logger.LogInformation($"ย้ายไฟล์ไปยัง {destinationPath}");
-
-                return destinationPath;
+                _logger.LogError($"ไม่พบไฟล์ที่ต้นทาง: {fullSourcePath}");
+                throw new FileNotFoundException($"ไม่พบไฟล์: {fullSourcePath}");
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "เกิดข้อผิดพลาดในการย้ายไฟล์");
-                throw;
-            }
+
+            // ย้ายไฟล์ไปปลายทาง
+            File.Move(fullSourcePath, fullDestinationPath);
+
+            _logger.LogInformation($"โอนย้ายไฟล์สำเร็จ {fullDestinationPath}");
+            return fullDestinationPath;
         }
+
+
     }
 
 }
